@@ -50,8 +50,8 @@ class Blackjack:
         self.allow_surrender = allow_surrender
         self.dealer_hit_s17 = dealer_hit_s17
         self.shoe = Shoe(decks)
-        self.player_hand = Hand()
-        self.dealer_hand = Hand()
+        self.player = Player()
+        self.dealer = Dealer()
         self.reward = 0
         self.done = False
 
@@ -59,116 +59,115 @@ class Blackjack:
         self.done = False
         self.reward = 0
         self.shoe = Shoe(self.decks)  # TODO multiple decks
-        self.player_hand = Hand()
-        self.dealer_hand = Hand()
-        self.player_hand.add_card(self.shoe.deal_card())
-        self.dealer_hand.add_card(self.shoe.deal_card())
-        self.player_hand.add_card(self.shoe.deal_card())
-        self.dealer_hand.add_card(self.shoe.deal_card())
-        if self.player_hand.value == 21 and self.dealer_hand.value == 21:
-            # Blackjack push
+        cards = [self.shoe.deal_card() for _ in range(4)]
+        self.player = Player(cards[0], cards[2])
+        self.dealer = Dealer(cards[1], cards[3])
+
+        if self.player.state == 'BJ' and self.dealer.value == 21:  # Blackjack push
             self.reward = 0
             self.done = True
-        elif self.dealer_hand.value == 21:
-            # Dealer Blackjack  ##TODO hole card
+        elif self.dealer.value == 21:  # Dealer Blackjack
             self.reward = -1
             self.done = True
-        elif self.player_hand.value == 21:
-            # Player Blackjack
+        elif self.player.state == 'BJ':  # Player Blackjack
             self.reward = +1.5
             self.done = True
-        # Cards dealt, no winner
-        return self.state()
+        else:  # Cards dealt, no winner
+            pass
+
+        return self.state, self.done, self.reward
 
     def step(self, action):
         if action not in self.get_actions():
             raise Exception("""Invalid action submitted""")
+
         if action == 0:  # stand
-            if self.dealer_hit_s17:
-                while self.dealer_hand.value <= 16 or \
-                        (self.dealer_hand.soft and self.dealer_hand.value == 17):
-                    self.dealer_hand.add_card(self.shoe.deal_card())
-            else:
-                while self.dealer_hand.value <= 16:
-                    self.dealer_hand.add_card(self.shoe.deal_card())
-            if self.dealer_hand.value > 21:  # Dealer busts
+            self.dealer.play(self.shoe, self.dealer_hit_s17)
+            if self.dealer.value > 21:  # Dealer busts
                 self.reward = +1
-            elif self.player_hand.value > self.dealer_hand.value:  # Player wins
+            elif self.player.hand.value > self.dealer.value:  # Player hand wins
                 self.reward = +1
-            elif self.player_hand.value == self.dealer_hand.value:  # Push
-                self.reward = 0
-            elif self.player_hand.value < self.dealer_hand.value:  # Player loses
+            elif self.player.hand.value < self.dealer.value:  # Player hand loses
                 self.reward = -1
+            else:  # Push
+                self.reward = 0
             self.done = True
+
         elif action == 1:  # hit
-            self.player_hand.add_card(self.shoe.deal_card())
-            if self.player_hand.value > 21:
-                # Player busts
+            current_hand = self.player.hand
+            current_hand.add_card(self.shoe.deal_card())
+            if current_hand.value > 21:  # Player busts current hand
                 self.reward = -1
                 self.done = True
             else:
                 self.reward = 0
                 self.done = False
+
         elif action == 2:  # Double
-            self.player_hand.add_card(self.shoe.deal_card())
-            if self.player_hand.value > 21:
-                # Player busts
-                self.reward = -1
+            current_hand = self.player.hand
+            current_hand.add_card(self.shoe.deal_card())
+            if current_hand.value > 21:  # Player busts
+                self.reward = -2
                 self.done = True
             else:
-                self.step(action=0)
-                self.reward *= 2
-        elif action == 3:  # TODO Split
+                self.dealer.play(self.dealer_hit_s17)
+                if self.dealer.value > 21:  # Dealer busts
+                    self.reward = +2
+                elif self.player.hand.value > self.dealer.value:  # Player hand wins
+                    self.reward = +2
+                elif self.player.hand.value < self.dealer.value:  # Player hand loses
+                    self.reward = -2
+                else:  # Push
+                    self.reward = 0
+                self.done = True
+
+        elif action == 3:  # No Split in this version
             pass
+
         elif action == 4:  # Surrender
             self.reward = -0.5
             self.done = True
 
-        return self.state()
+        return self.state, self.done, self.reward
 
+    @property
     def state(self):
-        if self.done:
-            return self.player_hand.state, self.dealer_hand.state, self.reward, self.done
-        return self.player_hand.state, self.dealer_state(), self.reward, self.done
-
-    def dealer_state(self):
-        up_card = self.dealer_hand.cards[0]
-        if up_card.value == 11:
-            return 1
-        return up_card.value
+        return self.player.state, self.dealer.state
 
     def get_actions(self):
         actions = None
         if not self.done:
             actions = [0, 1]
-            if (self.allow_double and len(self.player_hand.cards) == 2 and
-                    self.player_hand.value in [9, 10, 11]):
+            if self.allow_double and len(self.player.hand.cards) == 2 and self.player.hand.value in [9, 10, 11]:
                 actions.append(2)
-            if self.allow_split and self.player_hand.state()[0] == 'P':
+            if self.allow_split and self.player.hand.state[0] == 'P':
                 actions.append(3)
-            if self.allow_surrender and len(self.player_hand.cards) == 2:
+            if self.allow_surrender and len(self.player.hand.cards) == 2:
                 actions.append(4)
         return actions
 
-    def observe(self):
-        return self.player_hand.state, self.dealer_hand.state, self.reward, self.done
-
-    def reset(self):
-        pass
-
     def __str__(self):
         done = "Done" if self.done else "Ready"
-        output = f'Player: {str(self.player_hand)} \n' \
-                 f'Dealer: {str(self.dealer_hand)} \n' \
+        output = f'Player: {str(self.player.hand)} \n' \
+                 f'Dealer: {str(self.dealer)} \n' \
                  f'Reward: {self.reward} Status: {done}'
         return output
 
 
-class Dealer:
+class Player:
 
-    def __init__(self):
-        self.hand =
+    def __init__(self, card_1=None, card_2=None):
+        self.hand = Hand(card_1, card_2)
 
+    def add_card(self, card):
+        self.hand.add_card(card)
+
+    def __str__(self):
+        pass
+
+    @property
+    def state(self):
+        return self.hand.state
 
 
 class Hand:
@@ -196,34 +195,35 @@ class Hand:
         Method to update the state of a hand after adding a card.
     """
 
-    def __init__(self):
-        self.cards = []
-        self.value = 0
-        self.soft = False
-        self.state = None
+    def __init__(self, card_1=None, card_2=None):
+        if card_1 and card_2:
+            self.cards = [card_1, card_2]
+        elif card_1:
+            self.cards = [card_1]
+        else:
+            self.cards = []
+
+        self.soft = None
+        self.value = None
+        self.count()
+        self.bet = 1
 
     def add_card(self, card):
         self.cards.append(card)
-        if self.soft:
-            if card.rank == 'A':
-                self.value += 1
-            else:
-                self.value += card.value
-                if self.value > 21:
-                    self.value -= 10
-                    self.soft = False
-        else:
-            if card.rank == 'A':
-                if self.value <= 10:
-                    self.value += 11
-                    self.soft = True
-                else:
-                    self.value += 1
-            else:
-                self.value += card.value
-        self.state = self.update_state()
+        self.count()
 
-    def update_state(self):
+    def count(self):
+        values = [c.value for c in self.cards]
+        value = sum(values)
+        if 1 not in values or value + 10 > 21:
+            self.value = value
+            self.soft = False
+        else:
+            self.value = value + 10
+            self.soft = True
+
+    @property
+    def state(self):
         if len(self.cards) == 2:
             if self.value == 21:
                 return "BJ"
@@ -232,7 +232,28 @@ class Hand:
         return ('S' if self.soft else 'H') + str(self.value)
 
     def __str__(self):
-        return ' '.join(str(_) for _ in self.cards) + '  ' + self.state
+        return ' '.join(str(c) for c in self.cards) + '  ' + self.state
+
+
+class Dealer(Hand):
+
+    def __init__(self, card_1=None, card_2=None):
+        super().__init__(card_1, card_2)
+
+    @property
+    def state(self):
+        return self.cards[0].value
+
+    def play(self, shoe, dealer_hit_s17=False):
+        if dealer_hit_s17:
+            while self.value <= 16 or (self.soft and self.value == 17):
+                self.add_card(shoe.deal_card())
+        else:
+            while self.value <= 16:
+                self.add_card(shoe.deal_card())
+
+    def __str__(self):
+        return ' '.join(str(c) for c in self.cards) + '  Total: ' + str(self.value)
 
 
 class Shoe:
@@ -317,13 +338,12 @@ class Card:
     suit : str
         char for suit of each card from ♣♦♥♠
     value : int
-        value of card for blackjack.  Ace has value of 11.
-    face : str
-        string representing rank and suit of card.
+        value of card for blackjack.  Ace has value of 1.
 
     Methods
     -------
-    None
+    add
+    str
     """
 
     def __init__(self, int_rank, int_suit):
@@ -340,11 +360,9 @@ class Card:
         self.rank = ranks[int_rank]
         self.suit = suits[int_suit]
         self.value = int_rank if int_rank < 10 else 10
-        self.value = 11 if int_rank == 1 else self.value
-        self.face = self.rank + self.suit
 
     def __add__(self, other_card):
         return self.value + other_card.value
 
     def __str__(self):
-        return self.face
+        return self.rank + self.suit
